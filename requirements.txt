@@ -1,0 +1,3 @@
+# crowddynamics
+pyqt4
+pyqtgraph==0.10.0

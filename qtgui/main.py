@@ -16,9 +16,8 @@ from multiprocessing import Queue
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
 
-from crowddynamics.functions import load_config
-from .graphics import MultiAgentPlot
-from .ui.gui import Ui_MainWindow
+from qtgui.graphics import MultiAgentPlot
+from qtgui.ui.gui import Ui_MainWindow
 
 
 class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
@@ -35,24 +34,15 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
     - Sidebar (left)
     - Graphics layout widget (middle)
     - Control bar (bottom)
-
     """
+    logger = logging.getLogger(__name__)
 
     def __init__(self):
         r"""
         MainWindow
         """
         super(MainWindow, self).__init__()
-
-        # Logger
-        self.logger = logging.getLogger(__name__)
-
-        # Load ui files
         self.setupUi(self)
-
-        # Loading data from configs
-        # TODO: replace with better way to find simulations
-        self.configs = load_config("simulations.yaml")
 
         # Simulation with multiprocessing
         self.queue = Queue(maxsize=4)
@@ -72,15 +62,12 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.configure_plot()
         self.configure_signals()
 
-        # Do not use multiprocessing in windows because of different semantics compared
-        # to linux.
+        # Do not use multiprocessing in windows because of different semantics
+        # compared to linux.
         self.enable_multiprocessing = not sys.platform.startswith('Windows')
-        self.logger.info("Multiprocessing Enabled: {}".format(
-            self.enable_multiprocessing))
 
     def enable_controls(self, boolean):
-        """
-        Enable controls
+        """Enable controls
 
         Args:
             boolean (bool):
