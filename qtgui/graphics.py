@@ -76,6 +76,7 @@ def linestring(geom, **kargs):
     Returns:
         PlotDataItem: 
     """
+    # TODO: MultiLineString
     return pg.PlotDataItem(*geom.xy, **kargs)
 
 
@@ -91,13 +92,11 @@ def polygon(geom, **kargs):
     return pg.PlotDataItem(*geom.exterior.xy, **kargs)
 
 
-# def set_data(plotitem, settings):
-#     for key, val in settings["inactive"].items():
-#         plotitem.opts[key][active ^ True] = val
-
-
 class MultiAgentPlot(pg.PlotItem):
-    r"""MultiAgentPlot is GraphicsItem for displaying simulation graphics."""
+    r"""MultiAgentPlot 
+
+    GraphicsItem for displaying individual graphics of individual simulation.
+    """
     logger = logging.getLogger(__name__)
 
     def __init__(self, parent=None):
@@ -152,6 +151,7 @@ class MultiAgentPlot(pg.PlotItem):
 
     @staticmethod
     def set_agents_data(agents, item):
+        # TODO: set symbolBrushes and symbolPens through PlotDataItem.opts
         if is_model(agents, 'circular'):
             item.setData(agents['position'])
         elif is_model(agents, 'three_circle'):

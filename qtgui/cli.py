@@ -1,17 +1,32 @@
 """Extends crowddynamics commandline client with gui related commands"""
 import logging
 import sys
+import platform
+import os
 
-from crowddynamics.cli import main
+import click
 from PyQt4 import QtGui, QtCore
+from loggingtools import setup_logging
 
 from qtgui.main import MainWindow
 
-logger = logging.getLogger(__name__)
+BASE_DIR = os.path.dirname(__file__)
+LOG_CFG = os.path.join(BASE_DIR, 'logging.yaml')
+
+
+def user_info():
+    logger = logging.getLogger(__name__)
+    logger.info("Platform: %s", platform.platform())
+    logger.info("Path: %s", sys.path[0])
+    logger.info("Python: %s", sys.version[0:5])
 
 
 def run_gui():
     r"""Launches the graphical user interface for visualizing simulation."""
+    setup_logging(LOG_CFG)
+    user_info()
+
+    logger = logging.getLogger(__name__)
     logger.info('Starting GUI')
     app = QtGui.QApplication(sys.argv)
     win = MainWindow()
@@ -31,7 +46,16 @@ def run_gui():
     sys.exit()
 
 
-@main()
-def gui():
+@click.group()
+def main():
+    pass
+
+
+@main.command()
+def run():
     """Launch gui for crowddynamics"""
     run_gui()
+
+
+if __name__ == "__main__":
+    main()

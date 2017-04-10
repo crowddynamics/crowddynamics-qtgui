@@ -7,17 +7,103 @@ designer. [Hess2013]_, [Sepulveda2014]_
 Design of the gui was inspired by the design of RtGraph [campagnola2012]_
 
 """
-import importlib
 import logging
 import sys
-from functools import partial
 from multiprocessing import Queue
 
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
+from crowddynamics.parse import ArgSpec
 
+from qtgui.exceptions import CrowdDynamicsGUIException
 from qtgui.graphics import MultiAgentPlot
 from qtgui.ui.gui import Ui_MainWindow
+
+
+def clear_queue(queue):
+    """Clear all items from a queue"""
+    while not queue.empty():
+        queue.get()
+
+
+def clear_widgets(layout):
+    """Clear widgets from a layout
+    
+    Args:
+        layout: 
+
+    References
+        - http://stackoverflow.com/questions/4528347/clear-all-widgets-in-a-layout-in-pyqt
+    """
+    for i in reversed(range(layout.count())):
+        if i in (0, 1):
+            continue
+        layout.itemAt(i).widget().setParent(None)
+
+
+def create_widget(name, default, values, callback):
+    """Create QWidget for setting data
+
+    Args:
+        name (str): 
+            Name for the label of the widget
+        default (int|float|bool|str): 
+            Default value for the widget
+        values (typing.Sequence): 
+            Values that are valid input for the widget
+        callback (typing.Callable): 
+            Callback function that is called when the value of widget changes.
+
+    Returns:
+        typing.Tuple[QtGui.QLabel, QtGui.QWidget]: 
+    """
+    label = QtGui.QLabel(name)
+
+    if isinstance(default, int):
+        widget = QtGui.QSpinBox()
+
+        if values[0] is not None:
+            widget.setMinimum(values[0])
+        else:
+            widget.setMinimum(-100000)
+
+        if values[1] is not None:
+            widget.setMaximum(values[1])
+        else:
+            widget.setMaximum(100000)
+
+        widget.setValue(default)
+        widget.valueChanged.connect(callback)
+    elif isinstance(default, float):
+        widget = QtGui.QDoubleSpinBox()
+
+        inf = float("inf")
+        if values[0] is not None:
+            widget.setMinimum(values[0])
+        else:
+            widget.setMinimum(-inf)
+
+        if values[1] is not None:
+            widget.setMaximum(values[1])
+        else:
+            widget.setMaximum(inf)
+
+        widget.setValue(default)
+        widget.valueChanged.connect(callback)
+    elif isinstance(default, bool):
+        widget = QtGui.QRadioButton()
+        widget.setChecked(default)
+        widget.toggled.connect(callback)
+    elif isinstance(default, str):
+        widget = QtGui.QComboBox()
+        widget.addItems(values)
+        index = widget.findText(default)
+        widget.setCurrentIndex(index)
+        widget.currentIndexChanged[str].connect(callback)
+    else:
+        raise CrowdDynamicsGUIException('Invalid type for sidebar.')
+
+    return label, widget
 
 
 class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
@@ -53,14 +139,28 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.plot = None
 
         # Buttons
-        # RadioButton for initializing HDF5 saving for the simulation
-        self.savingButton = QtGui.QRadioButton("Save to HDF5Store")
-        # Button that initializes selected simulation
+        # self.savingButton = QtGui.QRadioButton("Save")
         self.initButton = QtGui.QPushButton("Initialize Simulation")
 
-        # Configures. Should be last.
-        self.configure_plot()
-        self.configure_signals()
+        # Graphics widget for plotting simulation data.
+        pg.setConfigOptions(antialias=True)
+        self.graphicsLayout.setBackground(None)
+        self.plot = MultiAgentPlot()
+        self.graphicsLayout.addItem(self.plot, 0, 0)
+
+        # Sets the functionality and values for the widgets.
+        self.timer.timeout.connect(self.update_plots)
+        self.startButton.clicked.connect(self.start)
+        self.stopButton.clicked.connect(self.stop)
+        self.initButton.clicked.connect(self.set_simulation)
+
+        self.enable_controls(False)  # Disable until simulation is set
+
+        # Menus
+        names = ()  # NotImplemented
+        self.simulationsBox.addItem("")  # No simulation. Clear sidebar.
+        self.simulationsBox.addItems(names)
+        self.simulationsBox.currentIndexChanged[str].connect(self.set_sidebar)
 
         # Do not use multiprocessing in windows because of different semantics
         # compared to linux.
@@ -76,187 +176,64 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.stopButton.setEnabled(boolean)
         self.saveButton.setEnabled(boolean)
 
-    def configure_plot(self):
-        """Graphics widget for plotting simulation data."""
-        self.logger.info("")
-        pg.setConfigOptions(antialias=True)
-        self.graphicsLayout.setBackground(None)
-        self.plot = MultiAgentPlot()
-        self.graphicsLayout.addItem(self.plot, 0, 0)
-
-    def configure_signals(self):
-        """Sets the functionality and values for the widgets."""
-        self.logger.info("")
-
-        # Buttons
-        self.timer.timeout.connect(self.update_plots)
-        self.startButton.clicked.connect(self.start)
-        self.stopButton.clicked.connect(self.stop)
-        self.initButton.clicked.connect(self.set_simulation)
-
-        # Disable until simulation is set
-        self.enable_controls(False)
-
-        # Menus
-        names = tuple(self.configs["simulations"].keys())
-        self.simulationsBox.addItem("")  # No simulation. Clear sidebar.
-        self.simulationsBox.addItems(names)
-        self.simulationsBox.currentIndexChanged[str].connect(self.set_sidebar)
-
     def reset_buffers(self):
         r"""Reset buffers"""
-        self.logger.info("")
-        while not self.queue.empty():
-            self.queue.get()
-
-    def clear_sidebar(self):
-        r"""Clear sidebar"""
-        # http://stackoverflow.com/questions/4528347/clear-all-widgets-in-a-layout-in-pyqt
-        self.logger.info("")
-        layout = self.sidebarLeft
-        for i in reversed(range(layout.count())):
-            if i in (0, 1):
-                continue
-            self.logger.debug("{}".format(layout.itemAt(i)))
-            layout.itemAt(i).widget().setParent(None)
+        clear_queue(self.queue)
 
     def set_sidebar(self, name):
-        """
-        Set sidebar
+        """Set sidebar
 
         Args:
             name (str):
 
         """
-        self.logger.info(name)
-
         self.clear_sidebar()
 
         if name == "":
             return
 
-        kwarg_mapping = self.configs["kwarg_mapping"]
-        kwargs = self.configs["simulations"][name]["kwargs"]
-
-        def _update(key, value):
-            # FIXME
-            self.logger.debug("Setting \"{}\" to \"{}\"".format(key, value))
-            kwargs[key] = value
-
-        for key, val in kwargs.items():
-            self.logger.debug("{}: {}".format(key, val))
-            # Set valid values and current value
-            label = QtGui.QLabel(key)
-            values = kwarg_mapping[key]
-            update = partial(_update, key)
-
-            if isinstance(val, int):
-                widget = QtGui.QSpinBox()
-
-                if values[0] is not None:
-                    widget.setMinimum(values[0])
-                else:
-                    widget.setMinimum(-100000)
-
-                if values[1] is not None:
-                    widget.setMaximum(values[1])
-                else:
-                    widget.setMaximum(100000)
-
-                widget.setValue(val)
-                widget.valueChanged.connect(update)
-            elif isinstance(val, float):
-                widget = QtGui.QDoubleSpinBox()
-
-                inf = float("inf")
-                if values[0] is not None:
-                    widget.setMinimum(values[0])
-                else:
-                    widget.setMinimum(-inf)
-
-                if values[1] is not None:
-                    widget.setMaximum(values[1])
-                else:
-                    widget.setMaximum(inf)
-
-                widget.setValue(val)
-                widget.valueChanged.connect(update)
-            elif isinstance(val, bool):
-                widget = QtGui.QRadioButton()
-                widget.setChecked(val)
-                widget.toggled.connect(update)
-            elif isinstance(val, str):
-                widget = QtGui.QComboBox()
-                widget.addItems(values)
-                index = widget.findText(val)
-                widget.setCurrentIndex(index)
-                widget.currentIndexChanged[str].connect(update)
-            else:
-                self.logger.warning(
-                    "Value type not supported: {}".format(type(val)))
-
+        specs: ArgSpec = NotImplemented
+        for name, default, annotation in specs:
+            callback = NotImplemented
+            label, widget = create_widget(name, default, annotation, callback)
             self.sidebarLeft.addWidget(label)
             self.sidebarLeft.addWidget(widget)
 
-        self.sidebarLeft.addWidget(self.savingButton)
+        # self.sidebarLeft.addWidget(self.savingButton)
         self.sidebarLeft.addWidget(self.initButton)
+
+    def clear_sidebar(self):
+        r"""Clear sidebar"""
+        clear_widgets(self.sidebarLeft)
 
     def set_simulation(self):
         r"""Set simulation"""
-        self.logger.info("")
-
         self.reset_buffers()
 
-        # Import simulation from examples and initializes it.
         name = self.simulationsBox.currentText()
 
-        d = self.configs["simulations"][name]
-        module = importlib.import_module(d["module"])
-        simulation = getattr(module, d["class"])
-        self.process = simulation(self.queue, **d["kwargs"])
-
-        # Enable controls
         self.enable_controls(True)
-
-        # TODO: better format
-        # Plot Simulation
         self.plot.configure(self.process)
 
-        # Queing dictates what data is sent to graphics for display. For example
-        # positions of agents.
-        args = [(("agent", "agent"),
-                 ["position", "active", "position_ls", "position_rs"])]
-
-        # if self.process.game is not None:
-        #     args.append((("game", "agent"), ["strategy"]))
-
         # TODO: simulation Communication
-        # self.process.configure_queuing(args)
-        if self.savingButton.isChecked():
-            pass
-            # TODO: simulation IO
-            # self.process.configure_hdfstore()
 
     def update_plots(self):
         r"""Update plots"""
-        """Updates the data in the plot(s)."""
         data = self.queue.get()
-        if data is None:
+        if data:
+            if not self.enable_multiprocessing:
+                self.process.update()  # Sequential processing
+            self.plot.update_data(data)
+        else:
             self.timer.stop()
             self.enable_controls(False)
             self.process = None
             self.reset_buffers()
-        else:
-            if not self.enable_multiprocessing:
-                self.process.update()  # Sequential processing
-            self.plot.update_data(data)
 
     def start(self):
         """Start simulation process and updating plot."""
         self.startButton.setEnabled(False)
         if self.process is not None:
-            self.logger.info("")
-
             if self.enable_multiprocessing:
                 self.process.start()
             else:
@@ -269,8 +246,6 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
     def stop(self):
         """Stops simulation process and updating the plot"""
         if self.process is not None:
-            self.logger.info("")
-
             if self.enable_multiprocessing:
                 self.process.stop()
             else:
