@@ -293,7 +293,8 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         cfg = self.configs[simuname]
 
         for spec in cfg['specs']:
-            def callback(value): cfg['kwargs'][spec.name] = value
+            def callback(value):
+                cfg['kwargs'][spec.name] = value
 
             label, widget = create_data_widget(spec.name,
                                                spec.default,
@@ -315,13 +316,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         cfg = self.configs[simuname]
 
         simulation = cfg['func'](**cfg['kwargs'])
-        process = MultiAgentProcess(simulation)
-
+        self.process = MultiAgentProcess(simulation)
         self.enable_controls(True)
         self.plot.configure(simulation)
-
-        self.process = process
-        self.simulation = simulation
 
         # TODO: simulation Communication
 

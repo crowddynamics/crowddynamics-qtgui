@@ -1,15 +1,18 @@
 import logging
 import os
-from collections import namedtuple
+from collections import namedtuple, Iterable
 
 import numpy as np
 import pyqtgraph as pg
 from crowddynamics.core.structures.agents import is_model
-from shapely.geometry import LineString
-from shapely.geometry import Polygon
+from loggingtools import log_with
+from qtgui.exceptions import CrowdDynamicsGUIException
+from shapely.geometry import Point, LineString, Polygon
 from crowddynamics.simulation.multiagent import MASTaskNode
 from crowddynamics.io import load_config
 
+
+logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(__file__)
 GRAPHICS_CFG = os.path.join(BASE_DIR, 'graphics.cfg')
 GRAPHICS_CFG_SPEC = os.path.join(BASE_DIR, 'graphics_spec.cfg')
@@ -40,6 +43,7 @@ class GuiCommunication(MASTaskNode):
     # TODO:
 
 
+@log_with(logger)
 def circular(radius):
     """Defaults settings for circular plot items
 
@@ -60,6 +64,7 @@ def circular(radius):
     return pg.PlotDataItem(**settings)
 
 
+@log_with(logger)
 def three_circle(r_center, r_left, r_right):
     """Three circles"""
     return ThreeCircle(center=circular(r_center),
@@ -67,6 +72,7 @@ def three_circle(r_center, r_left, r_right):
                        right=circular(r_right))
 
 
+@log_with(logger)
 def linestring(geom, **kargs):
     """Make plotitem from LineString
 
@@ -80,6 +86,7 @@ def linestring(geom, **kargs):
     return pg.PlotDataItem(*geom.xy, **kargs)
 
 
+@log_with(logger)
 def polygon(geom, **kargs):
     """Make plotitem from Polygon
 
@@ -90,6 +97,29 @@ def polygon(geom, **kargs):
         PlotDataItem:
     """
     return pg.PlotDataItem(*geom.exterior.xy, **kargs)
+
+
+@log_with(logger)
+def shapes(geom, **kargs):
+    """Shape
+
+    Args:
+        geom: 
+        **kargs: 
+
+    Returns:
+        list:
+    """
+    if isinstance(geom, Point):
+        return []  # NotImplemented
+    if isinstance(geom, LineString):
+        return [linestring(geom, **kargs)]
+    elif isinstance(geom, Polygon):
+        return [polygon(geom, **kargs)]
+    elif isinstance(geom, Iterable):
+        return sum((shapes(geo) for geo in geom), [])
+    else:
+        raise CrowdDynamicsGUIException
 
 
 class MultiAgentPlot(pg.PlotItem):
@@ -122,6 +152,11 @@ class MultiAgentPlot(pg.PlotItem):
 
     @domain.setter
     def domain(self, geom):
+        """Set domain
+
+        Args:
+            geom (Polygon): 
+        """
         x, y = geom.exterior.xy
         x, y = np.asarray(x), np.asarray(y)
         self.setRange(xRange=(x.min(), x.max()), yRange=(y.min(), y.max()))
@@ -135,9 +170,15 @@ class MultiAgentPlot(pg.PlotItem):
 
     @obstacles.setter
     def obstacles(self, geom):
-        item = polygon(geom)
-        self.addItem(item)
-        self.__obstacles = item
+        """Set obstacles
+
+        Args:
+            geom (LineString|MultiLineString): 
+        """
+        items = shapes(geom)
+        for item in items:
+            self.addItem(item)
+        self.__obstacles = items
 
     @property
     def targets(self):
@@ -145,9 +186,15 @@ class MultiAgentPlot(pg.PlotItem):
 
     @targets.setter
     def targets(self, geom):
-        item = polygon(geom)
-        self.addItem(item)
-        self.__targets = item
+        """Targets
+
+        Args:
+            geom (Polygon|MultiPolygon): 
+        """
+        items = shapes(geom)
+        for item in items:
+            self.addItem(item)
+        self.__targets = items
 
     @staticmethod
     def set_agents_data(agents, item):
