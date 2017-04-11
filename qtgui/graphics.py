@@ -43,7 +43,6 @@ class GuiCommunication(MASTaskNode):
     # TODO:
 
 
-@log_with(logger)
 def circular(radius):
     """Defaults settings for circular plot items
 
@@ -64,7 +63,6 @@ def circular(radius):
     return pg.PlotDataItem(**settings)
 
 
-@log_with(logger)
 def three_circle(r_center, r_left, r_right):
     """Three circles"""
     return ThreeCircle(center=circular(r_center),

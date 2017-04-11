@@ -7,30 +7,31 @@ designer. [Hess2013]_, [Sepulveda2014]_
 Design of the gui was inspired by the design of RtGraph [campagnola2012]_
 """
 import logging
-import sys
 from collections import OrderedDict
+from functools import partial
 from multiprocessing import Queue
 
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
-from crowddynamics.simulation.multiagent import MultiAgentProcess
-from crowddynamics.parse import ArgSpec, import_simulation_callables, \
+from crowddynamics.parse import import_simulation_callables, \
     parse_signature
+from crowddynamics.simulation.multiagent import MultiAgentProcess
 from loggingtools import log_with
-
 from qtgui.exceptions import CrowdDynamicsGUIException
 from qtgui.graphics import MultiAgentPlot
 from qtgui.ui.gui import Ui_MainWindow
 
+logger = logging.getLogger(__name__)
 
-@log_with()
+
+@log_with(logger)
 def clear_queue(queue):
     """Clear all items from a queue"""
     while not queue.empty():
         queue.get()
 
 
-@log_with()
+@log_with(logger)
 def clear_widgets(layout):
     """Clear widgets from a layout
     
@@ -46,7 +47,7 @@ def clear_widgets(layout):
         layout.itemAt(i).widget().setParent(None)
 
 
-@log_with()
+@log_with(logger)
 def mkQComboBox(callback, default, values):
     """Create QComboBOx
 
@@ -67,7 +68,7 @@ def mkQComboBox(callback, default, values):
     return widget
 
 
-@log_with()
+@log_with(logger)
 def mkQRadioButton(callback, default):
     """Create QRadioButton
 
@@ -85,7 +86,7 @@ def mkQRadioButton(callback, default):
     return widget
 
 
-@log_with()
+@log_with(logger)
 def mkQDoubleSpinBox(callback, default, values):
     """Create QDoubleSpinBox
 
@@ -108,7 +109,7 @@ def mkQDoubleSpinBox(callback, default, values):
     return widget
 
 
-@log_with()
+@log_with(logger)
 def mkQSpinBox(callback, default, values):
     """Create QSpinBox
 
@@ -130,7 +131,7 @@ def mkQSpinBox(callback, default, values):
     return widget
 
 
-@log_with()
+@log_with(logger)
 def create_data_widget(name, default, values, callback):
     """Create QWidget for setting data
 
@@ -184,7 +185,7 @@ def create_data_widget(name, default, values, callback):
         raise error
 
 
-@log_with()
+@log_with(logger)
 def configs_dict(confpath):
     """Configs dictionary
     
@@ -233,10 +234,10 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         # Simulation with multiprocessing
-        self.queue = Queue(maxsize=4)
         self.simulation = None
-        self.process = None
         self.configs = dict()  # TODO: better configuration handling
+        self.process = None
+        self.queue = Queue(maxsize=4)
 
         # Graphics widget for plotting simulation data.
         pg.setConfigOptions(antialias=True)
@@ -256,10 +257,6 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.initButton.clicked.connect(self.set_simulation)
         self.simulationsBox.currentIndexChanged[str].connect(self.set_sidebar)
         self.actionOpen.triggered.connect(self.load_simulation_cfg)
-
-        # Do not use multiprocessing in windows because of different semantics
-        # compared to linux.
-        self.enable_multiprocessing = not sys.platform.startswith('Windows')
 
     def enable_controls(self, boolean):
         """Enable controls
@@ -283,6 +280,10 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.configs = configs_dict(confpath)
         self.simulationsBox.addItems(list(self.configs.keys()))
 
+    @log_with(logger)
+    def _callback(self, simuname, key, value):
+        self.configs[simuname]['kwargs'][key] = value
+
     def set_sidebar(self, simuname):
         """Set sidebar
 
@@ -290,16 +291,11 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             simuname (str):
         """
         self.clear_sidebar()
-        cfg = self.configs[simuname]
 
-        for spec in cfg['specs']:
-            def callback(value):
-                cfg['kwargs'][spec.name] = value
-
-            label, widget = create_data_widget(spec.name,
-                                               spec.default,
-                                               spec.annotation,
-                                               callback)
+        for spec in self.configs[simuname]['specs']:
+            label, widget = create_data_widget(
+                spec.name, spec.default, spec.annotation,
+                partial(self._callback, simuname, spec.name))
             self.sidebarLeft.addWidget(label)
             self.sidebarLeft.addWidget(widget)
 
@@ -311,49 +307,44 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
     def set_simulation(self):
         r"""Set simulation"""
+        # Clear data from the old simulation
         self.reset_buffers()
+
+        # Create new simulation
         simuname = self.simulationsBox.currentText()
         cfg = self.configs[simuname]
-
         simulation = cfg['func'](**cfg['kwargs'])
-        self.process = MultiAgentProcess(simulation)
-        self.enable_controls(True)
         self.plot.configure(simulation)
-
+        self.simulation = simulation
         # TODO: simulation Communication
 
+        self.enable_controls(True)
+
     def update_plots(self):
-        r"""Update plots"""
-        data = self.queue.get()
-        if data:
-            if not self.enable_multiprocessing:
-                self.process.update()  # Sequential processing
-            self.plot.update_data(data)
+        r"""Update plots. Consumes data from the queue."""
+        agents = self.queue.get()
+        if agents:  # TODO: is not EOS
+            self.plot.update_data(agents)
         else:
             self.timer.stop()
             self.enable_controls(False)
             self.process = None
-            self.reset_buffers()
 
     def start(self):
         """Start simulation process and updating plot."""
-        self.startButton.setEnabled(False)
-        if self.process is not None:
-            if self.enable_multiprocessing:
-                self.process.start()
-            else:
-                self.process.update()
-
+        if self.simulation:
+            # Wrap the simulation into a process class here because we can
+            # only use processes once.
+            self.startButton.setEnabled(False)
+            self.process = MultiAgentProcess(self.simulation)
+            self.process.start()
             self.timer.start(1)
         else:
-            self.logger.info("Process is not set")
+            self.logger.info("Simulation is not set.")
 
     def stop(self):
         """Stops simulation process and updating the plot"""
-        if self.process is not None:
-            if self.enable_multiprocessing:
-                self.process.stop()
-            else:
-                self.queue.put(None)
+        if self.process:
+            self.process.stop()
         else:
-            self.logger.info("Process is not set")
+            self.logger.info("There are no processes running.")
