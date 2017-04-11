@@ -189,9 +189,12 @@ class MultiAgentPlot(pg.PlotItem):
         self.clearPlots()
         self.clear()
 
-        self.domain = simulation.domain
-        self.obstacles = simulation.obstacles
-        self.targets = simulation.targets
+        if simulation.domain:
+            self.domain = simulation.domain
+        if simulation.obstacles:
+            self.obstacles = simulation.obstacles
+        if simulation.targets:
+            self.targets = simulation.targets
         self.agents = simulation.agents_array
 
     def update_data(self, agents):

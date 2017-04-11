@@ -64,7 +64,7 @@ class Ui_MainWindow(object):
         self.gridLayout.addWidget(self.controlbarDown, 1, 1, 1, 1)
         MainWindow.setCentralWidget(self.centralwidget)
         self.menubar = QtGui.QMenuBar(MainWindow)
-        self.menubar.setGeometry(QtCore.QRect(0, 0, 1000, 20))
+        self.menubar.setGeometry(QtCore.QRect(0, 0, 1000, 25))
         self.menubar.setObjectName(_fromUtf8("menubar"))
         self.simulationMenu = QtGui.QMenu(self.menubar)
         self.simulationMenu.setObjectName(_fromUtf8("simulationMenu"))
@@ -96,8 +96,8 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(_translate("MainWindow", "Crowd Dynamics", None))
-        self.startButton.setText(_translate("MainWindow", "Start Process", None))
-        self.stopButton.setText(_translate("MainWindow", "Stop Process", None))
+        self.startButton.setText(_translate("MainWindow", "Start", None))
+        self.stopButton.setText(_translate("MainWindow", "Stop", None))
         self.saveButton.setText(_translate("MainWindow", "Save", None))
         self.simulationMenu.setTitle(_translate("MainWindow", "Simulation", None))
         self.visualisationMenu.setTitle(_translate("MainWindow", "Visualisation", None))
