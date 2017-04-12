@@ -11,17 +11,31 @@ from collections import OrderedDict
 from functools import partial
 from multiprocessing import Queue
 
+import numpy as np
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
+from anytree.iterators import PreOrderIter
 from crowddynamics.parse import import_simulation_callables, \
     parse_signature
-from crowddynamics.simulation.multiagent import MultiAgentProcess
+from crowddynamics.simulation.multiagent import MultiAgentProcess, MASNode
 from loggingtools import log_with
+
 from qtgui.exceptions import CrowdDynamicsGUIException
 from qtgui.graphics import MultiAgentPlot
 from qtgui.ui.gui import Ui_MainWindow
 
 logger = logging.getLogger(__name__)
+
+
+class GuiCommunication(MASNode):
+    """Communication between the GUI and simulation."""
+
+    def __init__(self, simulation, queue):
+        super(GuiCommunication, self).__init__(simulation)
+        self.queue = queue
+
+    def update(self, *args, **kwargs):
+        self.queue.put(np.copy(self.simulation.agents_array))
 
 
 @log_with(logger)
@@ -272,13 +286,16 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         r"""Reset buffers"""
         clear_queue(self.queue)
 
+    def set_simulation_cfg(self, confpath):
+        self.configs = configs_dict(confpath)
+        self.simulationsBox.addItems(list(self.configs.keys()))
+
     def load_simulation_cfg(self):
         """Load simulation configurations"""
         self.simulationsBox.clear()
         confpath = QtGui.QFileDialog().getOpenFileName(
             self, 'Open file', '', 'Conf files (*.cfg)')
-        self.configs = configs_dict(confpath)
-        self.simulationsBox.addItems(list(self.configs.keys()))
+        self.set_simulation_cfg(confpath)
 
     @log_with(logger)
     def _callback(self, simuname, key, value):
@@ -314,21 +331,38 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         simuname = self.simulationsBox.currentText()
         cfg = self.configs[simuname]
         simulation = cfg['func'](**cfg['kwargs'])
+        communication = GuiCommunication(simulation, self.queue)
+
+        # TODO: inject node
+        for node in PreOrderIter(simulation.tasks):
+            if node.name == 'Reset':
+                node.inject_after(communication)
+                break
+
         self.plot.configure(simulation)
         self.simulation = simulation
-        # TODO: simulation Communication
 
+        # Last enable controls
         self.enable_controls(True)
+
+    def stop_plotting(self):
+        self.timer.stop()
+        self.enable_controls(True)
+        self.process = None
 
     def update_plots(self):
         r"""Update plots. Consumes data from the queue."""
         agents = self.queue.get()
-        if agents:  # TODO: is not EOS
-            self.plot.update_data(agents)
+        if agents is not MultiAgentProcess.EndProcess:
+            try:
+                self.plot.update_data(agents)
+            except CrowdDynamicsGUIException as error:
+                self.logger.error('Plotting stopped to error: {}'.format(
+                    error
+                ))
+                self.stop_plotting()
         else:
-            self.timer.stop()
-            self.enable_controls(False)
-            self.process = None
+            self.stop_plotting()
 
     def start(self):
         """Start simulation process and updating plot."""
@@ -336,7 +370,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             # Wrap the simulation into a process class here because we can
             # only use processes once.
             self.startButton.setEnabled(False)
-            self.process = MultiAgentProcess(self.simulation)
+            self.process = MultiAgentProcess(self.simulation, self.queue)
             self.process.start()
             self.timer.start(1)
         else:

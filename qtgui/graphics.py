@@ -5,12 +5,10 @@ from collections import namedtuple, Iterable
 import numpy as np
 import pyqtgraph as pg
 from crowddynamics.core.structures.agents import is_model
-from loggingtools import log_with
-from qtgui.exceptions import CrowdDynamicsGUIException
-from shapely.geometry import Point, LineString, Polygon
-from crowddynamics.simulation.multiagent import MASTaskNode
 from crowddynamics.io import load_config
-
+from loggingtools import log_with
+from qtgui.exceptions import CrowdDynamicsGUIException, FeatureNotImplemented
+from shapely.geometry import Point, LineString, Polygon
 
 logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(__file__)
@@ -36,11 +34,6 @@ def frames_per_second():
         s = np.clip(3 * dt, 0, 1)
         fps_prev = fps_prev * (1 - s) + fps * s
         yield fps_prev
-
-
-class GuiCommunication(MASTaskNode):
-    """Communication between the GUI and simulation."""
-    # TODO:
 
 
 def circular(radius):
@@ -136,7 +129,7 @@ class MultiAgentPlot(pg.PlotItem):
         # Utils
         # TODO: use configurations when setting plotitems
         self.configs = load_config(GRAPHICS_CFG, GRAPHICS_CFG_SPEC)
-        self.fsp = frames_per_second()
+        self.fps = frames_per_second()
 
         # Geometry
         self.__domain = None
@@ -203,7 +196,8 @@ class MultiAgentPlot(pg.PlotItem):
             for i, a in zip(item, ('position', 'position_ls', 'position_rs')):
                 i.setData(agents[a])
         else:
-            raise NotImplementedError
+            raise FeatureNotImplemented('Wrong agents type: "{}"'.format(
+                agents))
 
     @property
     def agents(self):

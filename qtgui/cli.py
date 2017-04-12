@@ -21,7 +21,7 @@ def user_info():
     logger.info("Python: %s", sys.version[0:5])
 
 
-def run_gui():
+def run_gui(simulation_cfg=None):
     r"""Launches the graphical user interface for visualizing simulation."""
     setup_logging(LOG_CFG)
     user_info()
@@ -30,6 +30,8 @@ def run_gui():
     logger.info('Starting GUI')
     app = QtGui.QApplication(sys.argv)
     win = MainWindow()
+    if simulation_cfg:
+        win.set_simulation_cfg(simulation_cfg)
     win.show()
 
     # Start Qt event loop unless running in interactive mode or using pyside.
@@ -52,9 +54,10 @@ def main():
 
 
 @main.command()
-def run():
+@click.option('--simulation_cfg', type=str, default=None)
+def run(simulation_cfg):
     """Launch gui for crowddynamics"""
-    run_gui()
+    run_gui(simulation_cfg)
 
 
 if __name__ == "__main__":
