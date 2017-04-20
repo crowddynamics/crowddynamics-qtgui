@@ -38,14 +38,14 @@ class GuiCommunication(MASNode):
         self.queue.put(np.copy(self.simulation.agents_array))
 
 
-@log_with(logger)
+@log_with()
 def clear_queue(queue):
     """Clear all items from a queue"""
     while not queue.empty():
         queue.get()
 
 
-@log_with(logger)
+@log_with()
 def clear_widgets(layout):
     """Clear widgets from a layout
     
@@ -61,7 +61,7 @@ def clear_widgets(layout):
         layout.itemAt(i).widget().setParent(None)
 
 
-@log_with(logger)
+@log_with()
 def mkQComboBox(callback, default, values):
     """Create QComboBOx
 
@@ -82,7 +82,7 @@ def mkQComboBox(callback, default, values):
     return widget
 
 
-@log_with(logger)
+@log_with()
 def mkQRadioButton(callback, default):
     """Create QRadioButton
 
@@ -100,7 +100,7 @@ def mkQRadioButton(callback, default):
     return widget
 
 
-@log_with(logger)
+@log_with()
 def mkQDoubleSpinBox(callback, default, values):
     """Create QDoubleSpinBox
 
@@ -123,7 +123,7 @@ def mkQDoubleSpinBox(callback, default, values):
     return widget
 
 
-@log_with(logger)
+@log_with()
 def mkQSpinBox(callback, default, values):
     """Create QSpinBox
 
@@ -145,7 +145,7 @@ def mkQSpinBox(callback, default, values):
     return widget
 
 
-@log_with(logger)
+@log_with()
 def create_data_widget(name, default, values, callback):
     """Create QWidget for setting data
 
@@ -199,7 +199,7 @@ def create_data_widget(name, default, values, callback):
         raise error
 
 
-@log_with(logger)
+@log_with()
 def configs_dict(confpath):
     """Configs dictionary
     
@@ -297,7 +297,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             self, 'Open file', '', 'Conf files (*.cfg)')
         self.set_simulation_cfg(confpath)
 
-    @log_with(logger)
+    @log_with()
     def _callback(self, simuname, key, value):
         self.configs[simuname]['kwargs'][key] = value
 
