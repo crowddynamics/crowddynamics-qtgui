@@ -1,6 +1,5 @@
 """Extends crowddynamics commandline client with gui related commands"""
 import logging
-import os
 import sys
 
 import click
@@ -9,13 +8,10 @@ from crowddynamics.logging import setup_logging
 
 from qtgui.main import MainWindow
 
-BASE_DIR = os.path.dirname(__file__)
-LOG_CFG = os.path.join(BASE_DIR, 'logging.yaml')
-
 
 def run_gui(simulation_cfg=None):
     r"""Launches the graphical user interface for visualizing simulation."""
-    setup_logging(log_cfg=LOG_CFG)
+    setup_logging()
 
     logger = logging.getLogger(__name__)
     logger.info('Starting GUI')

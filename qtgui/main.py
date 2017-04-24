@@ -14,9 +14,8 @@ from multiprocessing import Queue
 import numpy as np
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
-from anytree.iterators import PreOrderIter
-from crowddynamics.parse import import_simulation_callables, \
-    parse_signature
+from crowddynamics.config import import_simulation_callables
+from crowddynamics.parse import parse_signature
 from crowddynamics.simulation.multiagent import MultiAgentProcess, MASNode
 from loggingtools import log_with
 
@@ -272,6 +271,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.simulationsBox.currentIndexChanged[str].connect(self.set_sidebar)
         self.actionOpen.triggered.connect(self.load_simulation_cfg)
 
+    @log_with(qualname=True, ignore=('self',))
     def enable_controls(self, boolean):
         """Enable controls
 
@@ -282,14 +282,17 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.stopButton.setEnabled(boolean)
         self.saveButton.setEnabled(boolean)
 
+    @log_with(qualname=True, ignore=('self',))
     def reset_buffers(self):
         r"""Reset buffers"""
         clear_queue(self.queue)
 
+    @log_with(qualname=True, ignore=('self',))
     def set_simulation_cfg(self, confpath):
         self.configs = configs_dict(confpath)
         self.simulationsBox.addItems(list(self.configs.keys()))
 
+    @log_with(qualname=True, ignore=('self',))
     def load_simulation_cfg(self):
         """Load simulation configurations"""
         self.simulationsBox.clear()
@@ -297,10 +300,11 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             self, 'Open file', '', 'Conf files (*.cfg)')
         self.set_simulation_cfg(confpath)
 
-    @log_with()
+    @log_with(qualname=True, ignore=('self',))
     def _callback(self, simuname, key, value):
         self.configs[simuname]['kwargs'][key] = value
 
+    @log_with(qualname=True, ignore=('self',))
     def set_sidebar(self, simuname):
         """Set sidebar
 
@@ -318,6 +322,7 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
         self.sidebarLeft.addWidget(self.initButton)
 
+    @log_with(qualname=True, ignore=('self',))
     def clear_sidebar(self):
         r"""Clear sidebar"""
         clear_widgets(self.sidebarLeft)
@@ -333,11 +338,8 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         simulation = cfg['func'](**cfg['kwargs'])
         communication = GuiCommunication(simulation, self.queue)
 
-        # TODO: inject node
-        for node in PreOrderIter(simulation.tasks):
-            if node.name == 'Reset':
-                node.inject_after(communication)
-                break
+        node = simulation.tasks['Reset']
+        node.inject_after(communication)
 
         self.plot.configure(simulation)
         self.simulation = simulation

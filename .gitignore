@@ -1,6 +1,7 @@
 .idea/
 .logs/
 .benchmarks/
+docs/apidocs/
 
 
 # Created by .ignore support plugin (hsz.mobi)

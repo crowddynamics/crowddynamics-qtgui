@@ -1,23 +1,23 @@
 import logging
 import os
-from collections import namedtuple, Iterable
+from collections import Iterable
 
+import numba
 import numpy as np
 import pyqtgraph as pg
+from crowddynamics.config import load_config
 from crowddynamics.core.structures.agents import is_model
-from crowddynamics.io import load_config
+from crowddynamics.core.vector.vector2D import normalize, unit_vector
+
 from loggingtools import log_with
-from qtgui.exceptions import CrowdDynamicsGUIException, FeatureNotImplemented
+from numba import f8
 from shapely.geometry import Point, LineString, Polygon
 
-logger = logging.getLogger(__name__)
-BASE_DIR = os.path.dirname(__file__)
-GRAPHICS_CFG = os.path.join(BASE_DIR, 'graphics.cfg')
-GRAPHICS_CFG_SPEC = os.path.join(BASE_DIR, 'graphics_spec.cfg')
+from qtgui.exceptions import CrowdDynamicsGUIException, FeatureNotImplemented
 
-
-# TODO: orientation
-ThreeCircle = namedtuple('ThreeCircle', 'center left right')
+CONFIG_DIR = os.path.join(os.path.dirname(__file__), 'conf')
+GRAPHICS_CFG = os.path.join(CONFIG_DIR, 'graphics.cfg')
+GRAPHICS_CFG_SPEC = os.path.join(CONFIG_DIR, 'graphics_spec.cfg')
 
 
 def frames_per_second():
@@ -36,7 +36,7 @@ def frames_per_second():
         yield fps_prev
 
 
-def circular(radius):
+def circles(radius, **kargs):
     """Defaults settings for circular plot items
 
     Args:
@@ -53,17 +53,112 @@ def circular(radius):
         # 'symbolPen': np.zeros(radius, dtype=object),
         # 'symbolBrush': np.zeros(radius, dtype=object)
     }
-    return pg.PlotDataItem(**settings)
+    return pg.PlotDataItem(**settings, **kargs)
 
 
-def three_circle(r_center, r_left, r_right):
-    """Three circles"""
-    return ThreeCircle(center=circular(r_center),
-                       left=circular(r_left),
-                       right=circular(r_right))
+@numba.jit([(f8[:, :], f8[:, :], f8[:])],
+           nopython=True, nogil=True, cache=True)
+def lines(origin, direction, length):
+    """Lines
+
+    Args:
+        origin (numpy.ndarray): 
+        direction (numpy.ndarray): 
+        length (numpy.ndarray): 
+    """
+    n, m = origin.shape
+    values = np.empty(shape=(2 * n, m))
+    for i in range(n):
+        values[2 * i, :] = origin[i, :]
+        values[2 * i + 1, :] = origin[i, :] + normalize(direction[i]) * length[i]
+    return values
 
 
-@log_with(logger)
+def lines_connect(n):
+    connect = np.ones(shape=2 * n, dtype=np.uint8)
+    connect[1::2] = 0
+    return connect
+
+
+class AgentsBase(object):
+    __slots__ = ('center', 'left', 'right', 'orientation', 'direction',
+                 'target_direction')
+
+    def __init__(self):
+        self.center = None
+        self.left = None
+        self.right = None
+        self.orientation = None
+        self.direction = None
+        self.target_direction = None
+
+    def addItem(self, widget: pg.PlotItem):
+        raise NotImplementedError
+
+    def setData(self, agents: np.ndarray):
+        raise NotImplementedError
+
+
+class CircularAgents(AgentsBase):
+    def __init__(self, agents):
+        super().__init__()
+        assert is_model(agents, 'circular'), \
+            'Agent should be circular model'
+        connect = lines_connect(agents.size)
+        self.center = circles(agents['radius'])
+        self.direction = pg.PlotDataItem(connect=connect)
+        self.target_direction = pg.PlotDataItem(connect=connect)
+
+    def addItem(self, widget: pg.PlotItem):
+        widget.addItem(self.center)
+        widget.addItem(self.direction)
+        widget.addItem(self.target_direction)
+
+    def setData(self, agents):
+        self.center.setData(agents['position'])
+        self.direction.setData(
+            lines(agents['position'], agents['velocity'], 2 * agents['radius']))
+        self.target_direction.setData(
+            lines(agents['position'], agents['target_direction'],
+                  2 * agents['radius']))
+
+
+class ThreeCircleAgents(AgentsBase):
+    def __init__(self, agents):
+        super().__init__()
+        assert is_model(agents, 'three_circle'), \
+            'Agent should the three_circle model'
+        self.center = circles(agents['r_t'])
+        self.left = circles(agents['r_s'])
+        self.right = circles(agents['r_s'])
+        connect = lines_connect(agents.size)
+        self.orientation = pg.PlotDataItem(connect=connect)
+        self.direction = pg.PlotDataItem(connect=connect)
+        self.target_direction = pg.PlotDataItem(connect=connect)
+
+    def addItem(self, widget: pg.PlotItem):
+        widget.addItem(self.center)
+        widget.addItem(self.left)
+        widget.addItem(self.right)
+        widget.addItem(self.orientation)
+        widget.addItem(self.direction)
+        widget.addItem(self.target_direction)
+
+    def setData(self, agents):
+        self.center.setData(agents['position'])
+        self.left.setData(agents['position_ls'])
+        self.right.setData(agents['position_rs'])
+        self.orientation.setData(
+            lines(agents['position'], unit_vector(agents['orientation']),
+                  1.1 * agents['radius']))
+        self.direction.setData(
+            lines(agents['position'], agents['velocity'], 2 * agents['radius']))
+        self.target_direction.setData(
+            lines(agents['position'], agents['target_direction'],
+                  2 * agents['radius']))
+
+
+@log_with()
 def linestring(geom, **kargs):
     """Make plotitem from LineString
 
@@ -77,7 +172,7 @@ def linestring(geom, **kargs):
     return pg.PlotDataItem(*geom.xy, **kargs)
 
 
-@log_with(logger)
+@log_with()
 def polygon(geom, **kargs):
     """Make plotitem from Polygon
 
@@ -90,7 +185,7 @@ def polygon(geom, **kargs):
     return pg.PlotDataItem(*geom.exterior.xy, **kargs)
 
 
-@log_with(logger)
+@log_with()
 def shapes(geom, **kargs):
     """Shape
 
@@ -127,7 +222,6 @@ class MultiAgentPlot(pg.PlotItem):
         self.disableAutoRange()
 
         # Utils
-        # TODO: use configurations when setting plotitems
         self.configs = load_config(GRAPHICS_CFG, GRAPHICS_CFG_SPEC)
         self.fps = frames_per_second()
 
@@ -187,18 +281,6 @@ class MultiAgentPlot(pg.PlotItem):
             self.addItem(item)
         self.__targets = items
 
-    @staticmethod
-    def set_agents_data(agents, item):
-        # TODO: set symbolBrushes and symbolPens through PlotDataItem.opts
-        if is_model(agents, 'circular'):
-            item.setData(agents['position'])
-        elif is_model(agents, 'three_circle'):
-            for i, a in zip(item, ('position', 'position_ls', 'position_rs')):
-                i.setData(agents[a])
-        else:
-            raise FeatureNotImplemented('Wrong agents type: "{}"'.format(
-                agents))
-
     @property
     def agents(self):
         return self.__agents
@@ -206,18 +288,18 @@ class MultiAgentPlot(pg.PlotItem):
     @agents.setter
     def agents(self, agents):
         if is_model(agents, 'circular'):
-            item = circular(agents['radius'])
-            self.addItem(item)
+            self.__agents = CircularAgents(agents)
+            self.agents.addItem(self)
+            self.agents.setData(agents)
         elif is_model(agents, 'three_circle'):
-            item = three_circle(agents['r_t'], agents['r_s'], agents['r_s'])
-            for i in item:
-                self.addItem(i)
+            self.__agents = ThreeCircleAgents(agents)
+            self.agents.addItem(self)
+            self.agents.setData(agents)
         else:
-            raise NotImplementedError
+            raise FeatureNotImplemented('Wrong agents type: "{}"'.format(
+                agents))
 
-        self.set_agents_data(agents, item)
-        self.__agents = item
-
+    @log_with(qualname=True, timed=True, ignore=('self',))
     def configure(self, simulation):
         r"""Configure plot items
 
@@ -242,5 +324,5 @@ class MultiAgentPlot(pg.PlotItem):
         Args:
             agents (numpy.ndarray): 
         """
-        self.set_agents_data(agents, self.agents)
+        self.agents.setData(agents)
         self.setTitle('%0.2f fps' % next(self.fps))
