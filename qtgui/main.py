@@ -7,7 +7,7 @@ designer. [Hess2013]_, [Sepulveda2014]_
 Design of the gui was inspired by the design of RtGraph [campagnola2012]_
 """
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from functools import partial
 from multiprocessing import Queue
 
@@ -15,8 +15,8 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
 from crowddynamics.config import import_simulation_callables
-from crowddynamics.parse import parse_signature
-from crowddynamics.simulation.multiagent import MultiAgentProcess, MASNode
+from crowddynamics.simulation.multiagent import MultiAgentProcess, LogicNode
+from crowddynamics.utils import parse_signature
 from loggingtools import log_with
 
 from qtgui.exceptions import CrowdDynamicsGUIException
@@ -25,8 +25,10 @@ from qtgui.ui.gui import Ui_MainWindow
 
 logger = logging.getLogger(__name__)
 
+Message = namedtuple('Message', 'agents data')
 
-class GuiCommunication(MASNode):
+
+class GuiCommunication(LogicNode):
     """Communication between the GUI and simulation."""
 
     def __init__(self, simulation, queue):
@@ -34,7 +36,10 @@ class GuiCommunication(MASNode):
         self.queue = queue
 
     def update(self, *args, **kwargs):
-        self.queue.put(np.copy(self.simulation.agents_array))
+        self.queue.put(Message(
+            agents=np.copy(self.simulation.agents.array),
+            data=self.simulation.data
+        ))
 
 
 @log_with()
@@ -214,13 +219,15 @@ def configs_dict(confpath):
     Returns:
 
     """
+
     def iterable():
         for name, func in import_simulation_callables(confpath):
             specs = list(parse_signature(func))
             yield name, {'func': func,
                          'specs': specs,
                          'kwargs': OrderedDict(
-                                (spec.name, spec.default) for spec in specs)}
+                             (spec.name, spec.default) for spec in specs)}
+
     return OrderedDict(iterable())
 
 
@@ -258,6 +265,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.plot = MultiAgentPlot()
         self.graphicsLayout.setBackground(None)
         self.graphicsLayout.addItem(self.plot, 0, 0)
+
+        # self.plot_data = DataPlot()
+        # self.graphicsLayout.addItem(self.plot_data, 0, 1)
 
         # Buttons
         self.initButton = QtGui.QPushButton("Initialize Simulation")
@@ -338,10 +348,15 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         simulation = cfg['func'](**cfg['kwargs'])
         communication = GuiCommunication(simulation, self.queue)
 
-        node = simulation.tasks['Reset']
+        node = simulation.logic['Reset']
         node.inject_after(communication)
 
-        self.plot.configure(simulation)
+        self.plot.configure(
+            simulation.field.domain,
+            simulation.field.obstacles,
+            simulation.field.targets,
+            simulation.agents.array
+        )
         self.simulation = simulation
 
         # Last enable controls
@@ -354,10 +369,11 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
 
     def update_plots(self):
         r"""Update plots. Consumes data from the queue."""
-        agents = self.queue.get()
-        if agents is not MultiAgentProcess.EndProcess:
+        message = self.queue.get()
+        if message is not MultiAgentProcess.EndProcess:
             try:
-                self.plot.update_data(agents)
+                self.plot.update_data(message)
+                # self.plot_data.update_data(message)
             except CrowdDynamicsGUIException as error:
                 self.logger.error('Plotting stopped to error: {}'.format(
                     error

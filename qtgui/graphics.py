@@ -6,8 +6,8 @@ import numba
 import numpy as np
 import pyqtgraph as pg
 from crowddynamics.config import load_config
-from crowddynamics.core.structures.agents import is_model
-from crowddynamics.core.vector.vector2D import normalize, unit_vector
+from crowddynamics.simulation.agents import is_model
+from crowddynamics.core.vector2D import normalize, unit_vector
 
 from loggingtools import log_with
 from numba import f8
@@ -36,24 +36,39 @@ def frames_per_second():
         yield fps_prev
 
 
-def circles(radius, **kargs):
-    """Defaults settings for circular plot items
+def circles(radius):
+    """Defaults opts for circular plot items
 
     Args:
         radius (numpy.ndarray): 
 
     Returns:
-        pyqtgraph.PlotDataItem: 
+        dict: 
     """
-    settings = {
+    return {
         'pxMode': False,
         'pen': None,
         'symbol': 'o',
         'symbolSize': 2 * radius,
-        # 'symbolPen': np.zeros(radius, dtype=object),
-        # 'symbolBrush': np.zeros(radius, dtype=object)
     }
-    return pg.PlotDataItem(**settings, **kargs)
+
+
+def mk_opts(size=1, **kwargs):
+    opts = dict()
+
+    if 'pen' in kwargs:
+        pen = kwargs['pen']
+        opts['pen'] = pen if size == 1 else np.full(size, pen)
+
+    if 'symbolPen' in kwargs:
+        brush = kwargs['symbolPen']
+        opts['symbolPen'] = brush if size == 1 else np.full(size, brush)
+
+    if 'symbolBrush' in kwargs:
+        brush = kwargs['symbolBrush']
+        opts['symbolBrush'] = brush if size == 1 else np.full(size, brush)
+
+    return opts
 
 
 @numba.jit([(f8[:, :], f8[:, :], f8[:])],
@@ -85,12 +100,15 @@ class AgentsBase(object):
                  'target_direction')
 
     def __init__(self):
-        self.center = None
-        self.left = None
-        self.right = None
-        self.orientation = None
-        self.direction = None
-        self.target_direction = None
+        # Torso
+        self.center = pg.PlotDataItem()
+        self.left = pg.PlotDataItem()
+        self.right = pg.PlotDataItem()
+
+        # Direction indicators
+        self.orientation = pg.PlotDataItem()
+        self.direction = pg.PlotDataItem()
+        self.target_direction = pg.PlotDataItem()
 
     def addItem(self, widget: pg.PlotItem):
         raise NotImplementedError
@@ -100,62 +118,79 @@ class AgentsBase(object):
 
 
 class CircularAgents(AgentsBase):
-    def __init__(self, agents):
+    @log_with(qualname=True, ignore=('self',))
+    def __init__(self, agents, configs):
         super().__init__()
         assert is_model(agents, 'circular'), \
             'Agent should be circular model'
-        connect = lines_connect(agents.size)
-        self.center = circles(agents['radius'])
-        self.direction = pg.PlotDataItem(connect=connect)
-        self.target_direction = pg.PlotDataItem(connect=connect)
 
+    @log_with(qualname=True, ignore=('self',))
     def addItem(self, widget: pg.PlotItem):
         widget.addItem(self.center)
         widget.addItem(self.direction)
         widget.addItem(self.target_direction)
 
     def setData(self, agents):
+        connect = lines_connect(agents.size)
+        self.center.opts.update(**circles(agents['radius']))
+        self.direction.opts.update(
+            connect=connect,
+            pen=pg.mkPen('l', width=0.03, cosmetic=False))
+        self.target_direction.opts.update(
+            connect=connect,
+            pen=pg.mkPen('g', width=0.03, cosmetic=False))
         self.center.setData(agents['position'])
-        self.direction.setData(
-            lines(agents['position'], agents['velocity'], 2 * agents['radius']))
-        self.target_direction.setData(
-            lines(agents['position'], agents['target_direction'],
-                  2 * agents['radius']))
+        self.direction.setData(lines(agents['position'],
+                                     agents['velocity'], 2 * agents['radius']))
+        self.target_direction.setData(lines(agents['position'],
+                                            agents['target_direction'],
+                                            2 * agents['radius']))
 
 
 class ThreeCircleAgents(AgentsBase):
-    def __init__(self, agents):
+    @log_with(qualname=True, ignore=('self',))
+    def __init__(self, agents, configs):
         super().__init__()
         assert is_model(agents, 'three_circle'), \
             'Agent should the three_circle model'
-        self.center = circles(agents['r_t'])
-        self.left = circles(agents['r_s'])
-        self.right = circles(agents['r_s'])
-        connect = lines_connect(agents.size)
-        self.orientation = pg.PlotDataItem(connect=connect)
-        self.direction = pg.PlotDataItem(connect=connect)
-        self.target_direction = pg.PlotDataItem(connect=connect)
 
+    @log_with(qualname=True, ignore=('self',))
     def addItem(self, widget: pg.PlotItem):
-        widget.addItem(self.center)
         widget.addItem(self.left)
         widget.addItem(self.right)
+        widget.addItem(self.center)
         widget.addItem(self.orientation)
         widget.addItem(self.direction)
         widget.addItem(self.target_direction)
 
     def setData(self, agents):
-        self.center.setData(agents['position'])
+        self.center.opts.update(**circles(agents['r_t']))
+        self.left.opts.update(**circles(agents['r_s']))
+        self.right.opts.update(**circles(agents['r_s']))
+
+        connect = lines_connect(agents.size)
+        self.orientation.opts.update(
+            connect=connect,
+            pen=pg.mkPen('m', width=0.03, cosmetic=False))
+        self.direction.opts.update(
+            connect=connect,
+            pen=pg.mkPen('l', width=0.03, cosmetic=False))
+        self.target_direction.opts.update(
+            connect=connect,
+            pen=pg.mkPen('g', width=0.03, cosmetic=False))
+
         self.left.setData(agents['position_ls'])
         self.right.setData(agents['position_rs'])
-        self.orientation.setData(
-            lines(agents['position'], unit_vector(agents['orientation']),
-                  1.1 * agents['radius']))
-        self.direction.setData(
-            lines(agents['position'], agents['velocity'], 2 * agents['radius']))
-        self.target_direction.setData(
-            lines(agents['position'], agents['target_direction'],
-                  2 * agents['radius']))
+        self.center.setData(agents['position'])
+        self.orientation.setData(lines(agents['position'],
+                                       unit_vector(agents['orientation']),
+                                       1.1 * agents['radius']))
+        self.direction.setData(lines(agents['position'],
+                                     agents['velocity'],
+                                     2 * agents['radius']))
+        self.target_direction.setData(lines(agents['position'],
+                                            agents['target_direction'],
+                                            2 * agents['radius']))
 
 
 @log_with()
@@ -208,6 +243,23 @@ def shapes(geom, **kargs):
         raise CrowdDynamicsGUIException
 
 
+class DataPlot(pg.PlotItem):
+    def __init__(self, parent=None):
+        super(DataPlot, self).__init__(parent)
+        self.time_tot = []
+        self.goal_reached = []
+        self.plot = pg.PlotDataItem()
+        self.addItem(self.plot)
+        self.setAspectLocked(lock=True, ratio=4)
+        self.showGrid(x=True, y=True, alpha=0.25)
+        # TODO: clear
+
+    def update_data(self, message):
+        self.time_tot.append(message.data['time_tot'])
+        self.goal_reached.append(message.data['goal_reached'])
+        self.plot.setData(self.time_tot, self.goal_reached)
+
+
 class MultiAgentPlot(pg.PlotItem):
     r"""MultiAgentPlot 
 
@@ -242,12 +294,15 @@ class MultiAgentPlot(pg.PlotItem):
         Args:
             geom (Polygon): 
         """
-        x, y = geom.exterior.xy
-        x, y = np.asarray(x), np.asarray(y)
-        self.setRange(xRange=(x.min(), x.max()), yRange=(y.min(), y.max()))
-        item = polygon(geom)
-        self.addItem(item)
-        self.__domain = item
+        if geom is None:
+            self.__domain = None
+        else:
+            x, y = geom.exterior.xy
+            x, y = np.asarray(x), np.asarray(y)
+            self.setRange(xRange=(x.min(), x.max()), yRange=(y.min(), y.max()))
+            item = polygon(geom)
+            self.addItem(item)
+            self.__domain = item
 
     @property
     def obstacles(self):
@@ -260,10 +315,13 @@ class MultiAgentPlot(pg.PlotItem):
         Args:
             geom (LineString|MultiLineString): 
         """
-        items = shapes(geom)
-        for item in items:
-            self.addItem(item)
-        self.__obstacles = items
+        if geom is None:
+            self.__obstacles = None
+        else:
+            items = shapes(geom)
+            for item in items:
+                self.addItem(item)
+            self.__obstacles = items
 
     @property
     def targets(self):
@@ -276,10 +334,13 @@ class MultiAgentPlot(pg.PlotItem):
         Args:
             geom (Polygon|MultiPolygon): 
         """
-        items = shapes(geom)
-        for item in items:
-            self.addItem(item)
-        self.__targets = items
+        if geom is None:
+            self.__targets = None
+        else:
+            items = shapes(geom)
+            for item in items:
+                self.addItem(item)
+            self.__targets = items
 
     @property
     def agents(self):
@@ -288,11 +349,11 @@ class MultiAgentPlot(pg.PlotItem):
     @agents.setter
     def agents(self, agents):
         if is_model(agents, 'circular'):
-            self.__agents = CircularAgents(agents)
+            self.__agents = CircularAgents(agents, self.configs['agents'])
             self.agents.addItem(self)
             self.agents.setData(agents)
         elif is_model(agents, 'three_circle'):
-            self.__agents = ThreeCircleAgents(agents)
+            self.__agents = ThreeCircleAgents(agents, self.configs['agents'])
             self.agents.addItem(self)
             self.agents.setData(agents)
         else:
@@ -300,29 +361,22 @@ class MultiAgentPlot(pg.PlotItem):
                 agents))
 
     @log_with(qualname=True, timed=True, ignore=('self',))
-    def configure(self, simulation):
-        r"""Configure plot items
-
-        Args:
-            simulation (MultiAgentSimulation): 
-        """
+    def configure(self, domain, obstacles, targets, agents):
+        """Configure plot items"""
         # Clear previous plots and items
         self.clearPlots()
         self.clear()
+        self.domain = domain
+        self.obstacles = obstacles
+        self.targets = targets
+        self.agents = agents
 
-        if simulation.domain:
-            self.domain = simulation.domain
-        if simulation.obstacles:
-            self.obstacles = simulation.obstacles
-        if simulation.targets:
-            self.targets = simulation.targets
-        self.agents = simulation.agents_array
-
-    def update_data(self, agents):
-        """Update plot data
-
-        Args:
-            agents (numpy.ndarray): 
-        """
-        self.agents.setData(agents)
-        self.setTitle('%0.2f fps' % next(self.fps))
+    def update_data(self, message):
+        """Update plot data"""
+        agents = message.agents
+        data = message.data
+        self.agents.setData(agents[agents['active']])
+        title = 'Fps: {:.2f} | Iterations: {} | Time: {:.2f} '.format(
+            next(self.fps), data['iterations'], data['time_tot']
+        )
+        self.setTitle(title)
