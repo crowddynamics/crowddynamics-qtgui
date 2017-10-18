@@ -9,7 +9,7 @@ def readfile(filepath):
 
 
 setup(
-    name='crowddynamics-qtgui',
+    name='qtgui',
     version=versioneer.get_version(),
     cmdclass=versioneer.get_cmdclass(),
     description='',

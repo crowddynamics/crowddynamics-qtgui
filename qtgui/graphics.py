@@ -1,3 +1,6 @@
+from copy import deepcopy
+
+from PyQt4 import QtGui
 import logging
 import os
 from collections import Iterable
@@ -5,10 +8,8 @@ from collections import Iterable
 import numba
 import numpy as np
 import pyqtgraph as pg
-from crowddynamics.config import load_config
+from crowddynamics.core.vector2D import normalize, unit_vector, length
 from crowddynamics.simulation.agents import is_model
-from crowddynamics.core.vector2D import normalize, unit_vector
-
 from loggingtools import log_with
 from numba import f8
 from shapely.geometry import Point, LineString, Polygon
@@ -18,6 +19,40 @@ from qtgui.exceptions import CrowdDynamicsGUIException, FeatureNotImplemented
 CONFIG_DIR = os.path.join(os.path.dirname(__file__), 'conf')
 GRAPHICS_CFG = os.path.join(CONFIG_DIR, 'graphics.cfg')
 GRAPHICS_CFG_SPEC = os.path.join(CONFIG_DIR, 'graphics_spec.cfg')
+
+
+def color(name, alpha=255):
+    return {
+        'blue': QtGui.QColor(0, 0, 255, alpha),
+        'green': QtGui.QColor(0, 255, 0, alpha),
+        'red': QtGui.QColor(255, 0, 0, alpha),
+        'cyan': QtGui.QColor(0, 255, 255, alpha),
+        'magenta': QtGui.QColor(255, 0, 255, alpha),
+        'yellow': QtGui.QColor(255, 255, 0, alpha),
+        'black': QtGui.QColor(0, 0, 0, alpha),
+        'white': QtGui.QColor(255, 255, 255, alpha),
+        'd': QtGui.QColor(150, 150, 150, alpha),
+        'l': QtGui.QColor(200, 200, 200, alpha),
+        's': QtGui.QColor(100, 100, 150, alpha),
+    }[name]
+
+
+def gray_scale(arg, alpha=255):
+    r = g = b = int(arg * 255)
+    return QtGui.QColor(r, g, b, alpha)
+
+
+def color_cycle(size):
+    if size == 1:
+        return [color('red')]
+    elif size == 2:
+        return [color('red'), color('green')]
+    elif size == 3:
+        return [color('red'), color('green'), color('blue')]
+    elif size == 4:
+        return [color('red'), color('green'), color('blue'), color('yellow')]
+    else:
+        return [gray_scale(value) for value in np.linspace(0.2, 0.8, size)]
 
 
 def frames_per_second():
@@ -40,10 +75,10 @@ def circles(radius):
     """Defaults opts for circular plot items
 
     Args:
-        radius (numpy.ndarray): 
+        radius (numpy.ndarray):
 
     Returns:
-        dict: 
+        dict:
     """
     return {
         'pxMode': False,
@@ -73,19 +108,27 @@ def mk_opts(size=1, **kwargs):
 
 @numba.jit([(f8[:, :], f8[:, :], f8[:])],
            nopython=True, nogil=True, cache=True)
-def lines(origin, direction, length):
+def lines(origin, direction, lengths):
     """Lines
 
     Args:
-        origin (numpy.ndarray): 
-        direction (numpy.ndarray): 
-        length (numpy.ndarray): 
+        origin (numpy.ndarray):
+        direction (numpy.ndarray):
+        lengths (numpy.ndarray):
     """
     n, m = origin.shape
     values = np.empty(shape=(2 * n, m))
     for i in range(n):
+        l = lengths[i]
+        v_d = direction[i]
+
+        if length(v_d) < 0.05:
+            # Handle direction vector that is zero vector
+            l = 0.05
+            v_d = np.array((1.0, 0.0))
+
         values[2 * i, :] = origin[i, :]
-        values[2 * i + 1, :] = origin[i, :] + normalize(direction[i]) * length[i]
+        values[2 * i + 1, :] = origin[i, :] + normalize(v_d) * l
     return values
 
 
@@ -118,11 +161,9 @@ class AgentsBase(object):
 
 
 class CircularAgents(AgentsBase):
-    @log_with(qualname=True, ignore=('self',))
-    def __init__(self, agents, configs):
+    def __init__(self, agents):
         super().__init__()
-        assert is_model(agents, 'circular'), \
-            'Agent should be circular model'
+        assert is_model(agents, 'circular'), 'Agent should be circular model'
 
     @log_with(qualname=True, ignore=('self',))
     def addItem(self, widget: pg.PlotItem):
@@ -133,23 +174,46 @@ class CircularAgents(AgentsBase):
     def setData(self, agents):
         connect = lines_connect(agents.size)
         self.center.opts.update(**circles(agents['radius']))
+
+        brushes = np.full(shape=agents.size, fill_value=color('white'))
+
+        is_leader = agents['is_leader']
+        brushes[is_leader] = color_cycle(size=int(np.sum(is_leader)))
+
+        for i, j in enumerate(agents['index_leader']):
+            if j == -1:
+                continue
+            r, g, b, a = brushes[j].getRgb()
+            brushes[i] = QtGui.QColor(r, g, b, int(0.30 * 255))
+
+        # For inactive agents set lower alpha for current color
+        for i, b in enumerate(~agents['active']):
+            if b:
+                r, g, b, a = brushes[i].getRgb()
+                brushes[i] = QtGui.QColor(r, g, b, int(0.15 * a))
+
+        self.center.opts.update(symbolBrush=brushes,
+                                symbolPen=pg.mkPen(color=0.0))
+
         self.direction.opts.update(
             connect=connect,
             pen=pg.mkPen('l', width=0.03, cosmetic=False))
         self.target_direction.opts.update(
             connect=connect,
             pen=pg.mkPen('g', width=0.03, cosmetic=False))
+
         self.center.setData(agents['position'])
-        self.direction.setData(lines(agents['position'],
-                                     agents['velocity'], 2 * agents['radius']))
-        self.target_direction.setData(lines(agents['position'],
-                                            agents['target_direction'],
-                                            2 * agents['radius']))
+
+        self.direction.setData(
+            lines(agents['position'], agents['velocity'],
+                  2 * agents['radius']))
+        self.target_direction.setData(
+            lines(agents['position'], agents['target_direction'],
+                  2 * agents['radius']))
 
 
 class ThreeCircleAgents(AgentsBase):
-    @log_with(qualname=True, ignore=('self',))
-    def __init__(self, agents, configs):
+    def __init__(self, agents):
         super().__init__()
         assert is_model(agents, 'three_circle'), \
             'Agent should the three_circle model'
@@ -182,15 +246,16 @@ class ThreeCircleAgents(AgentsBase):
         self.left.setData(agents['position_ls'])
         self.right.setData(agents['position_rs'])
         self.center.setData(agents['position'])
-        self.orientation.setData(lines(agents['position'],
-                                       unit_vector(agents['orientation']),
-                                       1.1 * agents['radius']))
-        self.direction.setData(lines(agents['position'],
-                                     agents['velocity'],
-                                     2 * agents['radius']))
-        self.target_direction.setData(lines(agents['position'],
-                                            agents['target_direction'],
-                                            2 * agents['radius']))
+
+        self.orientation.setData(
+            lines(agents['position'], unit_vector(agents['orientation']),
+                  1.1 * agents['radius']))
+        self.direction.setData(
+            lines(agents['position'], agents['velocity'],
+                  2 * agents['radius']))
+        self.target_direction.setData(
+            lines(agents['position'], agents['target_direction'],
+                  2 * agents['radius']))
 
 
 @log_with()
@@ -198,10 +263,10 @@ def linestring(geom, **kargs):
     """Make plotitem from LineString
 
     Args:
-        geom (LineString|LinearRing): 
+        geom (LineString|LinearRing):
 
     Returns:
-        PlotDataItem: 
+        PlotDataItem:
     """
     # TODO: MultiLineString
     return pg.PlotDataItem(*geom.xy, **kargs)
@@ -212,8 +277,8 @@ def polygon(geom, **kargs):
     """Make plotitem from Polygon
 
     Args:
-        geom (Polygon):  
-    
+        geom (Polygon):
+
     Returns:
         PlotDataItem:
     """
@@ -225,8 +290,8 @@ def shapes(geom, **kargs):
     """Shape
 
     Args:
-        geom: 
-        **kargs: 
+        geom:
+        **kargs:
 
     Returns:
         list:
@@ -238,7 +303,7 @@ def shapes(geom, **kargs):
     elif isinstance(geom, Polygon):
         return [polygon(geom, **kargs)]
     elif isinstance(geom, Iterable):
-        return sum((shapes(geo) for geo in geom), [])
+        return sum((shapes(geo, **kargs) for geo in geom), [])
     else:
         raise CrowdDynamicsGUIException
 
@@ -261,7 +326,7 @@ class DataPlot(pg.PlotItem):
 
 
 class MultiAgentPlot(pg.PlotItem):
-    r"""MultiAgentPlot 
+    r"""MultiAgentPlot
 
     GraphicsItem for displaying individual graphics of individual simulation.
     """
@@ -269,13 +334,19 @@ class MultiAgentPlot(pg.PlotItem):
 
     def __init__(self, parent=None):
         super(MultiAgentPlot, self).__init__(parent)
+
+        self.frames_per_second = frames_per_second()
+
+        # Plot settings
         self.setAspectLocked(lock=True, ratio=1)
         self.showGrid(x=True, y=True, alpha=0.25)
         self.disableAutoRange()
 
-        # Utils
-        self.configs = load_config(GRAPHICS_CFG, GRAPHICS_CFG_SPEC)
-        self.fps = frames_per_second()
+        self.obstacles_kw = dict(
+            pen=pg.mkPen(color=0.0, width=1))
+
+        self.targets_kw = dict(
+            pen=pg.mkPen(color=0.5, width=1))
 
         # Geometry
         self.__domain = None
@@ -292,7 +363,7 @@ class MultiAgentPlot(pg.PlotItem):
         """Set domain
 
         Args:
-            geom (Polygon): 
+            geom (Polygon):
         """
         if geom is None:
             self.__domain = None
@@ -313,12 +384,12 @@ class MultiAgentPlot(pg.PlotItem):
         """Set obstacles
 
         Args:
-            geom (LineString|MultiLineString): 
+            geom (LineString|MultiLineString):
         """
         if geom is None:
             self.__obstacles = None
         else:
-            items = shapes(geom)
+            items = shapes(geom, **self.obstacles_kw)
             for item in items:
                 self.addItem(item)
             self.__obstacles = items
@@ -332,7 +403,7 @@ class MultiAgentPlot(pg.PlotItem):
         """Targets
 
         Args:
-            geom (Polygon|MultiPolygon): 
+            geom (Polygon|MultiPolygon):
         """
         if geom is None:
             self.__targets = None
@@ -349,11 +420,11 @@ class MultiAgentPlot(pg.PlotItem):
     @agents.setter
     def agents(self, agents):
         if is_model(agents, 'circular'):
-            self.__agents = CircularAgents(agents, self.configs['agents'])
+            self.__agents = CircularAgents(agents)
             self.agents.addItem(self)
             self.agents.setData(agents)
         elif is_model(agents, 'three_circle'):
-            self.__agents = ThreeCircleAgents(agents, self.configs['agents'])
+            self.__agents = ThreeCircleAgents(agents)
             self.agents.addItem(self)
             self.agents.setData(agents)
         else:
@@ -375,8 +446,7 @@ class MultiAgentPlot(pg.PlotItem):
         """Update plot data"""
         agents = message.agents
         data = message.data
-        self.agents.setData(agents[agents['active']])
+        self.agents.setData(agents)
         title = 'Fps: {:.2f} | Iterations: {} | Time: {:.2f} '.format(
-            next(self.fps), data['iterations'], data['time_tot']
-        )
+            next(self.frames_per_second), data['iterations'], data['time_tot'])
         self.setTitle(title)

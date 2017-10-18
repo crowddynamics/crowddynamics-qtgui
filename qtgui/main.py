@@ -8,19 +8,22 @@ Design of the gui was inspired by the design of RtGraph [campagnola2012]_
 """
 import logging
 from collections import OrderedDict, namedtuple
-from functools import partial
 from multiprocessing import Queue
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt4 import QtGui, QtCore
-from crowddynamics.config import import_simulation_callables
-from crowddynamics.simulation.multiagent import MultiAgentProcess, LogicNode
-from crowddynamics.utils import parse_signature
+from copy import deepcopy
+from crowddynamics.simulation.multiagent import MultiAgentProcess, LogicNode, \
+    MultiAgentSimulation
+from crowddynamics.traits import class_own_traits
+from crowddynamics.utils import import_subclasses
 from loggingtools import log_with
+from traitlets.traitlets import Instance
 
 from qtgui.exceptions import CrowdDynamicsGUIException
 from qtgui.graphics import MultiAgentPlot
+from qtgui.traits import trait_to_QWidget
 from qtgui.ui.gui import Ui_MainWindow
 
 logger = logging.getLogger(__name__)
@@ -30,16 +33,12 @@ Message = namedtuple('Message', 'agents data')
 
 class GuiCommunication(LogicNode):
     """Communication between the GUI and simulation."""
-
-    def __init__(self, simulation, queue):
-        super(GuiCommunication, self).__init__(simulation)
-        self.queue = queue
+    queue = Instance(klass=type(Queue()), allow_none=True)
 
     def update(self, *args, **kwargs):
         self.queue.put(Message(
             agents=np.copy(self.simulation.agents.array),
-            data=self.simulation.data
-        ))
+            data=self.simulation.data))
 
 
 @log_with()
@@ -52,9 +51,9 @@ def clear_queue(queue):
 @log_with()
 def clear_widgets(layout):
     """Clear widgets from a layout
-    
+
     Args:
-        layout: 
+        layout:
 
     References
         - http://stackoverflow.com/questions/4528347/clear-all-widgets-in-a-layout-in-pyqt
@@ -63,172 +62,6 @@ def clear_widgets(layout):
         if i in (0, 1):
             continue
         layout.itemAt(i).widget().setParent(None)
-
-
-@log_with()
-def mkQComboBox(callback, default, values):
-    """Create QComboBOx
-
-    Args:
-        callback: 
-        default: 
-        values: 
-
-    Returns:
-        QtGui.QComboBox: 
-
-    """
-    widget = QtGui.QComboBox()
-    widget.addItems(values if values else [default])
-    index = widget.findText(default)
-    widget.setCurrentIndex(index)
-    widget.currentIndexChanged[str].connect(callback)
-    return widget
-
-
-@log_with()
-def mkQRadioButton(callback, default):
-    """Create QRadioButton
-
-    Args:
-        callback: 
-        default: 
-
-    Returns:
-        QtGui.QRadioButton: 
-
-    """
-    widget = QtGui.QRadioButton()
-    widget.setChecked(default)
-    widget.toggled.connect(callback)
-    return widget
-
-
-@log_with()
-def mkQDoubleSpinBox(callback, default, values):
-    """Create QDoubleSpinBox
-
-    Args:
-        callback: 
-        default: 
-        values: 
-
-    Returns:
-        QtGui.QDoubleSpinBox: 
-
-    """
-    widget = QtGui.QDoubleSpinBox()
-    inf = float("inf")
-    minimum, maximum = values if values else (None, None)
-    widget.setMinimum(minimum if minimum else -inf)
-    widget.setMaximum(maximum if maximum else inf)
-    widget.setValue(default)
-    widget.valueChanged.connect(callback)
-    return widget
-
-
-@log_with()
-def mkQSpinBox(callback, default, values):
-    """Create QSpinBox
-
-    Args:
-        callback: 
-        default: 
-        values: 
-
-    Returns:
-        QtGui.QSpinBox: 
-
-    """
-    widget = QtGui.QSpinBox()
-    minimum, maximum = values if values else (None, None)
-    widget.setMinimum(minimum if minimum else -int(10e7))
-    widget.setMaximum(maximum if maximum else int(10e7))
-    widget.setValue(default)
-    widget.valueChanged.connect(callback)
-    return widget
-
-
-@log_with()
-def create_data_widget(name, default, values, callback):
-    """Create QWidget for setting data
-
-    .. list-table::
-       :header-rows: 1
-
-       * - Type
-         - Validation
-         - Qt widget
-       * - int
-         - Tuple[int, int]
-         - QSpinBox
-       * - float
-         - Tuple[float, float]
-         - QDoubleSpinBox
-       * - bool
-         - bool
-         - QRadioButton
-       * - str
-         - Sequence[str]
-         - QComboBox
-
-    Args:
-        name (str): 
-            Name for the label of the widget
-        default (int|float|bool|str): 
-            Default value for the widget
-        values (typing.Sequence): 
-            Values that are valid input for the widget
-        callback (typing.Callable): 
-            Callback function that is called when the value of widget changes.
-
-    Returns:
-        typing.Tuple[QtGui.QLabel, QtGui.QWidget]: 
-    """
-    label = QtGui.QLabel(name)
-
-    if isinstance(default, int):
-        return label, mkQSpinBox(callback, default, values)
-    elif isinstance(default, float):
-        return label, mkQDoubleSpinBox(callback, default, values)
-    elif isinstance(default, bool):
-        return label, mkQRadioButton(callback, default)
-    elif isinstance(default, str):
-        return label, mkQComboBox(callback, default, values)
-    else:
-        logger = logging.getLogger(__name__)
-        error = CrowdDynamicsGUIException(
-            'Invalid default type: {type}'.format(type=type(default)))
-        logger.error(error)
-        raise error
-
-
-@log_with()
-def configs_dict(confpath):
-    """Configs dictionary
-    
-    ::
-        
-        name:
-            func: Callable[MultiAgentSimulation]
-            specs: Sequence[ArgSpec]
-    
-    Args:
-        confpath: 
-
-    Returns:
-
-    """
-
-    def iterable():
-        for name, func in import_simulation_callables(confpath):
-            specs = list(parse_signature(func))
-            yield name, {'func': func,
-                         'specs': specs,
-                         'kwargs': OrderedDict(
-                             (spec.name, spec.default) for spec in specs)}
-
-    return OrderedDict(iterable())
 
 
 class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
@@ -254,8 +87,10 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         # Simulation with multiprocessing
+        self.configs = OrderedDict()
         self.simulation = None
-        self.configs = dict()  # TODO: better configuration handling
+        self.simulation_cls = None
+        self.simulation_kwargs = {}
         self.process = None
         self.queue = Queue(maxsize=4)
 
@@ -281,7 +116,6 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.simulationsBox.currentIndexChanged[str].connect(self.set_sidebar)
         self.actionOpen.triggered.connect(self.load_simulation_cfg)
 
-    @log_with(qualname=True, ignore=('self',))
     def enable_controls(self, boolean):
         """Enable controls
 
@@ -292,27 +126,23 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         self.stopButton.setEnabled(boolean)
         self.saveButton.setEnabled(boolean)
 
-    @log_with(qualname=True, ignore=('self',))
     def reset_buffers(self):
         r"""Reset buffers"""
         clear_queue(self.queue)
 
     @log_with(qualname=True, ignore=('self',))
-    def set_simulation_cfg(self, confpath):
-        self.configs = configs_dict(confpath)
+    def set_simulations(self, module_path):
+        self.configs.update(
+            import_subclasses(module_path, MultiAgentSimulation))
         self.simulationsBox.addItems(list(self.configs.keys()))
 
     @log_with(qualname=True, ignore=('self',))
     def load_simulation_cfg(self):
         """Load simulation configurations"""
         self.simulationsBox.clear()
-        confpath = QtGui.QFileDialog().getOpenFileName(
-            self, 'Open file', '', 'Conf files (*.cfg)')
-        self.set_simulation_cfg(confpath)
-
-    @log_with(qualname=True, ignore=('self',))
-    def _callback(self, simuname, key, value):
-        self.configs[simuname]['kwargs'][key] = value
+        module_path = QtGui.QFileDialog().getOpenFileName(
+            self, 'Open file', '', 'Python file (*.py)')
+        self.set_simulations(module_path)
 
     @log_with(qualname=True, ignore=('self',))
     def set_sidebar(self, simuname):
@@ -321,32 +151,36 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
         Args:
             simuname (str):
         """
-        self.clear_sidebar()
+        self.reset_buffers()
 
-        for spec in self.configs[simuname]['specs']:
-            label, widget = create_data_widget(
-                spec.name, spec.default, spec.annotation,
-                partial(self._callback, simuname, spec.name))
+        # Clear sidebar first
+        clear_widgets(self.sidebarLeft)
+
+        # Get the simulation
+        simulation_cls = deepcopy(self.configs[simuname])
+        simulation_kwargs = {name: trait.default_value for name, trait in
+                             class_own_traits(simulation_cls)}
+
+        def gen_callback(name):
+            @log_with()
+            def callback(value):
+                simulation_kwargs[name] = value
+            return callback
+
+        for name, trait in class_own_traits(simulation_cls):
+            label, widget = trait_to_QWidget(name, trait, gen_callback(name))
             self.sidebarLeft.addWidget(label)
             self.sidebarLeft.addWidget(widget)
 
+        self.simulation_cls = simulation_cls
+        self.simulation_kwargs = simulation_kwargs
         self.sidebarLeft.addWidget(self.initButton)
 
-    @log_with(qualname=True, ignore=('self',))
-    def clear_sidebar(self):
-        r"""Clear sidebar"""
-        clear_widgets(self.sidebarLeft)
-
     def set_simulation(self):
-        r"""Set simulation"""
-        # Clear data from the old simulation
-        self.reset_buffers()
+        simulation = self.simulation_cls(**self.simulation_kwargs)
 
-        # Create new simulation
-        simuname = self.simulationsBox.currentText()
-        cfg = self.configs[simuname]
-        simulation = cfg['func'](**cfg['kwargs'])
-        communication = GuiCommunication(simulation, self.queue)
+        communication = GuiCommunication(simulation)
+        communication.queue = self.queue
 
         node = simulation.logic['Reset']
         node.inject_after(communication)
@@ -357,9 +191,9 @@ class MainWindow(QtGui.QMainWindow, Ui_MainWindow):
             simulation.field.targets,
             simulation.agents.array
         )
-        self.simulation = simulation
 
         # Last enable controls
+        self.simulation = simulation
         self.enable_controls(True)
 
     def stop_plotting(self):
