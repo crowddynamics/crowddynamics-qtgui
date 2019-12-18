@@ -18,7 +18,7 @@ def run_gui(simulation_cfg=None):
     app = QtGui.QApplication(sys.argv)
     win = MainWindow()
     if simulation_cfg:
-        win.set_simulation_cfg(simulation_cfg)
+        win.set_simulations(simulation_cfg)
     win.show()
 
     # Start Qt event loop unless running in interactive mode or using pyside.
@@ -41,10 +41,10 @@ def main():
 
 
 @main.command()
-@click.option('--simulation_cfg', type=str, default=None)
-def run(simulation_cfg):
+@click.option('--simulation_file', type=str, default=None)
+def run(simulation_file):
     """Launch gui for crowddynamics"""
-    run_gui(simulation_cfg)
+    run_gui(simulation_file)
 
 
 if __name__ == "__main__":
